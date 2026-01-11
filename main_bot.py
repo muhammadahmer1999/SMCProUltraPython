@@ -122,36 +122,41 @@ async def sync_closed_trades():
                   f"PnL: {pnl:.2f}%"
             await telegram.log_async(msg)
 
+async def run_cycle():
+    """Single execution cycle for Serverless/Cron deployment"""
+    start_time = time.time()
+    
+    # 1. Dashboard Stats
+    total_pnl, wins, losses = history.get_stats()
+    stats_msg = (
+        f"\n--- [ DASHBOARD ] {datetime.now().strftime('%H:%M:%S')} ---\n"
+        f"LIFETIME P&L: {total_pnl:.2f}%\n"
+        f"WINS: {wins} | LOSSES: {losses}\n"
+        "------------------------------------------"
+    )
+    print(stats_msg)
+
+    # 2. Sync Positions
+    await sync_closed_trades()
+
+    # 3. Parallel Scanning
+    symbols = await market.get_top_volume_symbols(limit=30)
+    print(f"Scanning {len(symbols)} high-volume symbols...")
+    
+    tasks = [scan_single_symbol(s) for s in symbols]
+    await asyncio.gather(*tasks)
+
+    elapsed = time.time() - start_time
+    return f"{stats_msg}\nScanned {len(symbols)} symbols in {elapsed:.2f}s."
+
 async def main():
     print(colored("==========================================", "yellow"))
     print(colored("   SMC PRO ULTRA (PYTHON VERSION)   ", "yellow", attrs=['bold']))
     print(colored("==========================================", "yellow"))
 
     while True:
-        start_time = time.time()
-        
-        # 1. Dashboard Stats
-        total_pnl, wins, losses = history.get_stats()
-        print(f"\n--- [ DASHBOARD ] {datetime.now().strftime('%H:%M:%S')} ---")
-        print(f"LIFETIME P&L: {colored(f'{total_pnl:.2f}%', 'green' if total_pnl >= 0 else 'red')}")
-        print(f"WINS: {wins} | LOSSES: {losses}")
-        print("------------------------------------------")
-
-        # 2. Sync Positions
-        await sync_closed_trades()
-
-        # 3. Parallel Scanning
-        symbols = await market.get_top_volume_symbols(limit=30)
-        print(f"Scanning {len(symbols)} high-volume symbols...")
-        
-        # Porting the parallel Task logic from C#
-        tasks = [scan_single_symbol(s) for s in symbols]
-        await asyncio.gather(*tasks)
-
-        # 4. Loop Control
-        elapsed = time.time() - start_time
-        wait = max(1, SCAN_DELAY - elapsed)
-        await asyncio.sleep(wait)
+        await run_cycle()
+        await asyncio.sleep(SCAN_DELAY)
 
 if __name__ == "__main__":
     try:
